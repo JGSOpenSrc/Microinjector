@@ -6,9 +6,9 @@
 // It is released under CC-BY-SA
 // includes may be found at http://github.com/mtu-most/most-scad-libraries
 
-include<scad-lib/fasteners.scad>
-include<scad-lib/steppers.scad>
-include<scad-lib/bearings.scad>
+include<most-scad-libraries/fasteners.scad>
+include<most-scad-libraries/steppers.scad>
+include<most-scad-libraries/bearings.scad>
 
 $fn = 96;
 

@@ -2,5 +2,5 @@
 	path = linear-actuator
 	url = https://github.com/mtu-most/linear-actuator
 [submodule "scad-lib"]
-	path = scad-lib
+	path = most-scad-libraries
 	url = https://github.com/mtu-most/most-scad-libraries
