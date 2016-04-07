@@ -7,10 +7,15 @@ The software in control runs on an Arduino in tandem with an Adafruit Motorshiel
 
 # Dependencies
 - OpenSCAD is required to generate the models from the .scad files. You can download it from www.openscad.org, or on linux grab it from apt-get as:
+
 sudo apt-get install openscad
+
 - The Arduino IDE is required to compile and download the control script to the hardware (unless that is you have your own toolchain). Download it from www.arduino.cc, or on linux grab it from apt-get as:
+
 sudo apt-get install arduino
+
 - The Adafruit Motor Shield e(VERSION 2!!) is needed to control the stepper motor used in the actuator. The best way to get it is grab it from github, to get it go to your arduino libraries folder and execute the command:
+
 git clone https://github.com/adafruit/Adafruit_Motor_Shield_V2_Library Adafruit_Motorshield
 
 # How to use
