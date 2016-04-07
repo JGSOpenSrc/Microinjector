@@ -1,7 +1,7 @@
 # Microinjector
 This repository contains the design files for a 3-D printable open hardware automated syringe pump, along with software to control the syringe pump over a serial port connection or via TTL logic. The original designs were published in a paper on the online journal PLOS ONE, and there are submodules of the relelvant repositories here.
 # About
-The design presented here intended to allow for precise injection of liquid volumes from a high quality syringe with microliter precision (hence the name, microinjector). However the mechanical designs are easily adapted to syringes of other sizes (see the linear_actuator scripts or check out the submodules for more info).
+The design presented here is intended to allow for precise injection of liquid volumes from a high quality syringe with microliter precision (hence the name, microinjector). However the mechanical designs are easily adapted to syringes of other sizes (see the linear_actuator scripts or check out the submodules for more info).
 
 The software in control runs on an Arduino in tandem with an Adafruit Motorshield (V2), using the motor shield library. Currently, calibration is performed by performing manual trials and tuning static constants in the arduino sketch to achieve desired levels of accuracy.
 
