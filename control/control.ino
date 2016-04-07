@@ -26,20 +26,19 @@ static const float steps_per_rev = 200;                           // Adjust acco
 static const int motor_speed = 600;                               // Adjust according to application, actual speed is capped by I2C bus frequency
 
 /* Enumeration of possible states */
-enum
-{
+enum STATE{
   halt,
   reset_pos,
   wait,
   inject
-} state;
+};
 
 /* Enumeration of possible positions */
-enum {
+enum POSITION{
   zero_stroke,
   mid_stroke,
   full_stroke
-} position;
+};
 
 Adafruit_MotorShield AFMS = Adafruit_MotorShield();             // Create the motor shield object with the default I2C address.
 
@@ -51,8 +50,8 @@ bool reset = true;                                              // Reset flag us
 
 int steps = 0;                                                  // Number of steps left for the actuator to complete before its current command is finished
 int volume = 0;                                                 // Volume of fluid requested for injection by serial communication interface.
-enum position injector_pos;                                     // General position of the injector at power-on reset. Can be zero-stroke, mid-stroke, or full-stroke.
-enum state injector_state;                                      // Control variable. Can be halt, reset_pos, wait, or inject
+enum POSITION injector_pos;                                     // General position of the injector at power-on reset. Can be zero-stroke, mid-stroke, or full-stroke.
+enum STATE injector_state;                                      // Control variable. Can be halt, reset_pos, wait, or inject
 char input_buffer[BUFFER_LEN];                                  // Serial input buffer, used to store serial data and to parse commands.
 char output_buffer[BUFFER_LEN];                                 // Serial output buffer, used to store messages which will be sent out to the serial port.
 char* cmd;                                                      // String pointer, used to parse serial commands
