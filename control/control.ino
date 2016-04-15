@@ -2,6 +2,10 @@
 #include<Adafruit_MotorShield.h>
 #include "utility/Adafruit_MS_PWMServoDriver.h"
 
+/* The amount of time, in seconds, that the injector will wait
+   after an injection before retracting the liquid. */
+#define TIMEOUT    10
+
 /* I2C bus speed, is modified in setup() */
 #define I2C_FREQ 400000L
 
@@ -14,8 +18,10 @@
 #define S2 10
 #define BOUNCE_DELAY 100
 #define TTL_INCREMENT_PIN 5
+#define IR_SENSOR_PIN A0;
 
-/* Constants for calculation */
+
+/* Constants for calculations */
 // volume injected after ttl pulse
 static const float ttl_step_volume = 10;                          // Adjust according to desired application
 // number of motor steps per microliter of fluid injected
@@ -24,13 +30,17 @@ static const float steps_per_ul = ((float)965) / ((float)25);     // Adjust acco
 static const float mm_per_rev = 1.25;                             // Adjust according to lead screw thread pitch
 static const float steps_per_rev = 200;                           // Adjust according to stepper motor used
 static const int motor_speed = 600;                               // Adjust according to application, actual speed is capped by I2C bus frequency
+// ADC thresholds for the IR liquid sensor
+static const int high_to_low = 300;
+static const int low_to_high = 700;
 
 /* Enumeration of possible states */
 enum STATE{
   halt,
   reset_pos,
   wait,
-  inject
+  inject,
+  withdraw
 };
 
 /* Enumeration of possible positions */
@@ -47,6 +57,8 @@ Adafruit_StepperMotor *motor = AFMS.getStepper(steps_per_rev, 1);// Connect a st
 
 bool stopflag = false;                                          // Emertency stop flag that is set by the forward limit switch. Prevents damage to injector.
 bool reset = true;                                              // Reset flag used to initialize the position of the injector.
+bool is_empty;                                                  // Flag used for detecting
+
 
 int steps = 0;                                                  // Number of steps left for the actuator to complete before its current command is finished
 int volume = 0;                                                 // Volume of fluid requested for injection by serial communication interface.
@@ -54,8 +66,6 @@ enum POSITION injector_pos;                                     // General posit
 enum STATE injector_state;                                      // Control variable. Can be halt, reset_pos, wait, or inject
 char input_buffer[BUFFER_LEN];                                  // Serial input buffer, used to store serial data and to parse commands.
 char output_buffer[BUFFER_LEN];                                 // Serial output buffer, used to store messages which will be sent out to the serial port.
-char* cmd;                                                      // String pointer, used to parse serial commands
-char* value;                                                    // String pointer, used to parse serial commands
 
 void setup() {
 
@@ -67,35 +77,62 @@ void setup() {
                                                                 // setup serial port
   Serial.begin(115200);
 
-                                                                //Setup pinmodes and interrupt handlers
+  /* Set up pin modes for safety / limit switches */
   pinMode(S1, INPUT_PULLUP);                                    // pole 1 of safety switch 1
   delay(10);                                                    // For some reason this delay is necessary
   pinMode(S2, INPUT_PULLUP);                                    // Configure the S2 with an internal pullup.
 
-                                                                // Determining the initial state of the actuator...
+  /* Determine the liquid level */
+  int i, avg;
+  for(i = 0; i < 10; i++){
+    avg += analogRead(IR_SENSOR_PIN);
+  } avg = avg / 10;
+
+  sprintf(output_buffer, "Average value read on IR sensor: %d", avg);
+  Serial.println(buffer);
+
+  if(avg > low_to_high) {
+    is_empty = true;
+    Serial.println("Initially, liquid not detected by sensor.");
+  }
+  else if (avg < high_to_low){
+    Serial.println("Initially, liquid detected by sensor.");
+  }
+  else {
+    Serial.println("Sensor read intermediate value...");
+    Serial.println("There is an error with the setup or calibration of the IR sensor...");
+    Serial.println("Examine the average value read, fix the problem, and then reset or reprogram.");
+    while(1);
+  }
+
+  /* Determine the initial state of the micoinjector */
   if (!digitalRead(S1) && digitalRead(S2)){                     // Actuator is initally in zero_stroke position
     injector_pos = zero_stroke;
     injector_state = halt;
-    Serial.println("INITIAL POSITION ZERO-STROKE");
+    Serial.println("Acuator initial position is zero-stroke.");
   }
   else if (digitalRead(S1) && !digitalRead(S2)){                // Actuator is initially in full_stroke position
     injector_pos = full_stroke;
     injector_state = halt;
-    Serial.println("INITIAL POSITION FULL-STROKE");
+    Serial.println("Actuator initial position is mid-stroke");
   }
   else if (digitalRead(S1) && digitalRead(S2)){                 // Actuator is initially in mid_stroke
     injector_pos = mid_stroke;
     injector_state = halt;
-    Serial.println("INITIAL POSITION MID-STROKE");
+    Serial.println("Actuator initial position is full-stroke");
   }
   else{
-    Serial.println("INITIAL STATE UNKNOWN!");
+    Serial.println("Actuator initial position unknown...");
     sprintf(output_buffer, "S1 %d S2 %d", digitalRead(S1), digitalRead(S2));
     Serial.println(output_buffer);
+    Serial.println("There is a problem with the limit switches.");
+    Serial.println("Fix the switches and then reset or reprogram.");
     while(1);
   }
 
-  pinMode(TTL_INCREMENT_PIN, INPUT_PULLUP);                     // Setup of the TTL increment pin used to trigger injections via pulses
+  /* Setup of the TTL injection trigger,
+  this requires a digital pin, and configuration of a hardware counter. */
+  pinMode(TTL_INCREMENT_PIN, INPUT_PULLUP);
                                                                 // Initialize Counter 1, used to track TTL pulses on the TTL_INCREMENT_PIN
   TCCR1A = 0x00;                                                // Configures Counter 1 to run in normal mode, with no output flags.
   TCCR1B = (1<<CS02)|(1<<CS01);                                 // Set the counter clock source to the TTL_INCREMENT_PIN falling edge.
@@ -111,13 +148,17 @@ void setup() {
 void loop() {
 
   if(halt == injector_state){                                   // injector is in the halt state - waiting for switch signal.
+
     switch(injector_pos){
 
       case zero_stroke:                                          // When in the zero-stroke position, waiting for S2 to be tripped
+
       if (!digitalRead(S2)){
+
         while(!digitalRead(S2)){
           delay(BOUNCE_DELAY);
         }
+
         delay(BOUNCE_DELAY);
         TCNT1 = 0;
         injector_state = wait;                                  // S2 tripped -> go to waiting state (injector is ready to inject)
@@ -126,35 +167,48 @@ void loop() {
       break;
 
       case mid_stroke:                                          // When in mid storke position, waiting for S1 or S2 to trip
+
       if (!digitalRead(S1)){
+
         while(!digitalRead(S1)){
           delay(BOUNCE_DELAY);                                  // Delays are for filtering switch bounce
         }
+
         delay(BOUNCE_DELAY);
         injector_state = reset_pos;                             // S1 tripped -> reset injector position to zero-stroke
         Serial.println("Resetting actuator position...");
       }
+
       else if (!digitalRead(S2)){
+
         while(!digitalRead(S2)){
           delay(BOUNCE_DELAY);                                  // Delays are for filtering switch bounce.
         }
+
         delay(BOUNCE_DELAY);
+
         TCNT1 = 0;
+
         injector_state = wait;                                  // S2 tripped -> go to waiting state (injector is ready to inject)
         Serial.println("waiting for user input...");
       }
       break;
 
-      case full_stroke:                                         // When in the full-stroke position, wait for S1 to be tripped
+      case full_stroke:
+      /* When in full-stroke position, wait for S1 to trip, then reset position */
       if(!digitalRead(S1)){
+
         while(!digitalRead(S1)){
           delay(BOUNCE_DELAY);                                  // Delays are for filtering switch bounce.
         }
+
         delay(BOUNCE_DELAY);
+
         injector_state = reset_pos;                             // S1 tripped -> reset injector position to zero-stroke
         Serial.println("Resetting actuator position...");
       }
       break;
+
       default:
         Serial.println("STATE DEFAULT");
       break;
@@ -162,6 +216,7 @@ void loop() {
   }
 
   else if (reset_pos == injector_state){                        // reset_pos state. The injector steps backward until it is in zero-stroke position.
+
     if (!digitalRead(S1)){
       motor->release();
       injector_pos = zero_stroke;
@@ -170,145 +225,191 @@ void loop() {
     }
 
     else {
+
       if (digitalRead(S2)){
         injector_pos = mid_stroke;                              // S2 tripped -> position is mid-stroke.
       }
+
       motor->step(1, BACKWARD, SINGLE);
     }
   }
 
   else if (wait == injector_state){                             // wait state. The injector is waiting for an injection commmand form the user.
-    if (steps > 0) {
-      injector_state = inject;                                  // Steps >0 -> go to the inject state.
-      Serial.println("injecting..");
-    } else {
-      getUserInput();                                           // Check for user input, enqueue any injection commands.
+
+    if (!check_liquid()) {
+      delay(1000 * TIMEOUT);
+
+      if(!check_liquid()){                                      // if the liquid is still present, withdraw it.
+        injector_state = withdraw;
+      }
+    }
+    else {
+
+      if(check_liquid() && get_user_input()){
+        injector_state = inject;
+        Serial.println("injecting..");
+      }
     }
   }
 
   else if (inject == injector_state){                           // inject state. The injector is currently stepping forward.
+
+    /* If S2 is depressed, then the syringe is empty. */
     if (!digitalRead(S2)){
       motor->release();
       injector_pos = full_stroke;
       injector_state = halt;                                    // S2 tripped -> position is full-stroke. Go to halt state.
-      steps = 0;
       Serial.println("halt!");
     }
 
-    else if (0 >= steps){
+    /* If the liquid is detected, cease injecting and wait */
+    else if (!check_liquid()){
       motor->release();
-      injector_state = wait;                                    // Steps complete. Go to the wait state.
+      injector_state = wait;
       Serial.println("waiting for user input...");
     }
 
     else {
-      motor->step(1, FORWARD, SINGLE);                          // Step the injector forward 1 and decrement steps
-      steps--;
+      motor->step(1, FORWARD, SINGLE);
       if(digitalRead(S1)){
         injector_pos = mid_stroke;                              // S1 high -> position is mid-stroke.
       }
+    }
+  }
 
+  else if (withdraw == injector_state){                         // withdraw state. The injecgtor is currently stepping backwards
+
+    /* if S1 is depressed, then the syringe cannot step back any more */
+    if(!digitalRead(S1)){
+      motor->release();
+      injector_pos = zero_stroke;
+      injector_state = halt;
+      Serial.println("halt!");
+    }
+
+    /* Liquid is no longer detected, cease withdrawing and wait */
+    else if (check_liquid()){
+      motor->release();
+      injector_state = wait;
+      Serial.println("waiting for user input...");
+    }
+
+    /* Step backward to withdraw liquid */
+    else {
+        motor->step(1, BACKWARD, SINGLE);
+
+        /* If S1 is pressed, the injector cannot step backward any more. */
+        if(!digitalRead(S1)){
+          motor->release();
+          injector_pos = zero_stroke;
+          injector_state = halt;
+        }
     }
   }
 }
 
-void getUserInput(){
-  if(Serial.available()){                                       // Check for a new serial command
-  parseCommand(&cmd, &value);
+/*  Reads the value from the IR sensor, and based upon the value
+    read and the current value of is_empty, operates on is_empty and returns its value.
 
-    if(NULL!=cmd && NULL!=value){                               // Execute parseCommand to check if the command is valid.
+    If there is liquid detected by the sensor, this will return false. If there
+    is no liquid detected, it will return true.
+ */
+bool check_liquid(){
+  int val = analogRead(IR_SENSOR_PIN);
 
-      if(0==strcmp(cmd, "step")){
-        steps = atoi(value);
-        sprintf(output_buffer,
-                "Command received, stepping %d units", steps);
-        Serial.println(output_buffer);                          // send a response to the user
-      }
+  is_empty = is_empty && !(val < high_to_low) || !is_empty && (val > low_to_high);
 
-      else if(0==strcmp(cmd, "volume")){                        // if the command is for a specific volume, calculate the required number of steps.
-        volume = atoi(value);
-        if(0!=volume){
-          volume = atoi(value);
-          steps = (int)((float)volume * steps_per_ul);
-          sprintf(output_buffer,                                // Send the number of required steps to the user.
-                  "Command received, stepping %d units",
-                   steps);
-          Serial.println(output_buffer);
-        }
+  return is_empty;
+}
 
-        else {                                                // Command input is invalid, notify user of error.
-          sprintf(output_buffer,
-                  "ERROR invalid command received");
-          Serial.println(output_buffer);
-        }
-      }
+/*
+  get_user_input
 
-      else {                                                  // Command input is invalid, notify user of error.
-        sprintf(output_buffer,
-                "ERROR invalid command received");
-        Serial.println(output_buffer);
-      }
+  Checks the serial port for an injection command, and also checks the hardware
+  counter for a TTL pulse (either can be implemented). Returns true if an injection
+  command has been received.
+*/
+bool get_user_input(){
+
+  bool inject = false;
+
+  int rc = read_line(input_buffer, BUFFER_LEN);
+
+  if(0 == rc){
+    /* Check to see if the string is a recognized command. */
+    if(0 == strcmp(input_buffer, "inject")){
+
+      inject = true;
+
+      sprintf(output_buffer,
+              "Command received :: inject");
+      Serial.println(output_buffer);
     }
 
-    else {                                                    // Command input is invalid, notify user of error.
+    else {
+      /* The string received was no good */
+      inject = false;
+
       sprintf(output_buffer,
-              "ERROR invalid command received");
+              "ERROR :: invalid command received");
       Serial.println(output_buffer);
     }
   }
 
-  else if(0 < TCNT1) {                                        // Check COUNTER1 for a TTL pulse, which indicates 1 injection requested.
+  /* Check the counter for a TTL pulse, which singals an injection request */
+  else if(0 < TCNT1) {
+
     TCNT1--;
-    steps = (int)((float)ttl_step_volume * (float)steps_per_ul);
+    inject = true;
+
     sprintf(output_buffer,
-            "TTL pulse received, stepping %d units", steps);  // Notify the user that the pulse was received.
+            "TTL pulse received");
     Serial.println(output_buffer);
   }
+
+  return inject;
 }
-/*
- * parseCommand(char**, char**) reads data from the serial buffer into the input buffer.
- * The data in the inputk buffer is parsed for the ' ' delimiting character (a space).
- * The input buffer is then separated into two strings, which are pointed at by cmd and value.
- *
- * cmd:   a pointer the the command parameter. Will be NULL if the command is invaled.
- * value: a pointer to the value parameter. Will be NULL if the command is invalid.
- *
- * Valid commands have the form COMMAND:VALUE where COMMAND and VALUE are strings of length greater then zero.
- */
 
-void  parseCommand(char** cmd, char** value){
-  char* strptr = input_buffer;
+/* read_line
 
-  while(Serial.available()){                                    // read the message from the serial buffer into the message buffer
-     *strptr = Serial.read();
-     strptr++;
-     delay(5);
-  }
-  *strptr = '\0';
+  A quick and dirty method for retrieving data segmented by newline characters
+  from the serial port. Writes the data to the buffer provided.
+*/
 
-  int len;                                                      // parse the message into its COMMAND:VALUE pair
-  len = strlen(input_buffer);
-  strptr = (char*)memchr(input_buffer, ' ', len);
+int read_line(char** buff, int buff_len, ){
+  int rc;
 
-  if(NULL == strptr){                                           // no occurrance of delimiter means invalid command, return NULL
-    *cmd = NULL;
-    *value = NULL;
-    return;
-  }
+  char* strptr = *buff;
 
-  if(strlen(strptr)==len){                                      // no occurance of COMMAND, return NULL
-    *cmd = NULL;
-    *value = NULL;
-    return;
+  bool overflow = false;
+
+  if (Serial.available()) do {
+
+    *strptr = Serial.read();
+    strptr++;
+
+    if(strptr > (*buff + buff_len)){
+      overflow = true;
+      break;
+    }
+
+  } while (*(strptr - 1) != '\n');
+
+  /* In case of buffer overflow, return 1*/
+  if(overflow){
+    rc = 1;
   }
 
-  if(strlen(strptr)==1){                                        // no occurance of VALUE, return NULL
-    *cmd = NULL;
-    *value = NULL;
-    return;
+  /* In case of no data available, return -1*/
+  else if (strptr == *buff) {
+    rc = -1;
   }
-  *strptr = '\0';
 
-  *cmd = input_buffer;                                         // return COMMAND:VALUE pair as two separate strings in the message buffer
-  *value = (strptr + 1);
+  /* No errors, clean up and return */
+  else {
+    *strptr = '\0';
+    rc = 0;
+  }
+
+  return rc;
 }

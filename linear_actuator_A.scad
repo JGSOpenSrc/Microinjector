@@ -12,7 +12,7 @@ include<most-scad-libraries/bearings.scad>
 
 $fn = 96;
 
-render_part(2);
+render_part(5);
 
 module render_part(part_to_render) {
 	if (part_to_render == 1) end_motor();
@@ -89,6 +89,8 @@ d_clamp_screw_nut = d_M3_nut;
 d_plunger = 9.5; // diameter of the plunger end
 d_syringe = 8.2; // diameter of the syringe body - sets size of syringe holder
 t_hook = 3; // thickness of the hook for securing syringe to actuator
+t_syringe_flange = 2.85; // thickness of the rim around the diameter of the syringe near the punlger
+standoff = 0.8 * t_syringe_flange;
 d_plunger_max = 16; // this sets the spacing for screws on the plunger retainer and carriage
 d_plunger_retainer = d_plunger_max + 12;
 
@@ -425,9 +427,8 @@ module clamp_syringe_pump() {
 							for (i = [0, -1])
 								translate([0, i * d_syringe / 2, 0])
 									cylinder(r = d_syringe / 2 + 4, h = t_syringe_clamp, center = true);
-
-				translate([0, -((w_ends + idler[0]) / 2 - idler[0]) / 2 - (w_ends + idler[0]) / 4 + (d_M3_nut + 2) / 2, 1])
-					cube([l_ends - 2 * (l_ends - cc_guides), d_M3_nut + 2, t_syringe_clamp + 2], center = true);
+				translate([0, -((w_ends + idler[0]) / 2 - idler[0]) / 2 - (w_ends + idler[0]) / 4 + (d_M3_nut + 2) / 2, standoff - 1])
+					cube([l_ends - 2 * (l_ends - cc_guides), d_M3_nut + 2, t_syringe_clamp + standoff], center = true);
 		}
 
 		// lead screw
@@ -438,9 +439,10 @@ module clamp_syringe_pump() {
 					cylinder(r = d_lead_screw / 2 + 1, h = t_syringe_clamp + 6, center = true);
 
 		// screw holes for retaining syringe against clamp
-		end_mount_holes(t_syringe_clamp + 1, d_M3_screw);
+		end_mount_holes(t_syringe_clamp + 5, d_M3_screw);
 
-		translate([0, 0, t_syringe_clamp / 2])
+		translate([0, 0, -t_syringe_clamp / 2])
+		rotate([0,180,0])
 			end_mount_holes(h_M3_nut * 2, d_M3_nut, 6);
 
 		// guide rods
