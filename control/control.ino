@@ -18,18 +18,11 @@
 #define S2 10
 #define BOUNCE_DELAY 100
 #define TTL_INCREMENT_PIN 5
-#define IR_SENSOR_PIN A0;
+#define IR_SENSOR_PIN A0
 
-
-/* Constants for calculations */
-// volume injected after ttl pulse
-static const float ttl_step_volume = 10;                          // Adjust according to desired application
-// number of motor steps per microliter of fluid injected
-static const float steps_per_ul = ((float)965) / ((float)25);     // Adjust according to empirical data (must calibrate)
-// millimeters of carriage motion per motor revolution
-static const float mm_per_rev = 1.25;                             // Adjust according to lead screw thread pitch
-static const float steps_per_rev = 200;                           // Adjust according to stepper motor used
-static const int motor_speed = 600;                               // Adjust according to application, actual speed is capped by I2C bus frequency
+// Motor constants
+static const int motor_speed = 600;
+static const int steps_per_rev = 200;
 // ADC thresholds for the IR liquid sensor
 static const int high_to_low = 300;
 static const int low_to_high = 700;
@@ -83,13 +76,13 @@ void setup() {
   pinMode(S2, INPUT_PULLUP);                                    // Configure the S2 with an internal pullup.
 
   /* Determine the liquid level */
-  int i, avg;
+  int avg;
   for(i = 0; i < 10; i++){
     avg += analogRead(IR_SENSOR_PIN);
   } avg = avg / 10;
 
   sprintf(output_buffer, "Average value read on IR sensor: %d", avg);
-  Serial.println(buffer);
+  Serial.println(output_buffer);
 
   if(avg > low_to_high) {
     is_empty = true;
@@ -140,6 +133,7 @@ void setup() {
 
   AFMS.begin();                                                 // Initialize motor
   motor->setSpeed(motor_speed);
+  
   stopflag = false;
 
   TWBR = ((F_CPU / I2C_FREQ) - 16) / 2;                         // Change the I2C frequency
@@ -210,8 +204,8 @@ void loop() {
       break;
 
       default:
-        Serial.println("STATE DEFAULT");
-      break;
+        Serial.println("STATE DEFAULT :: FATAL ERROR");
+        while(1);
     }
   }
 
@@ -336,8 +330,10 @@ bool get_user_input(){
   int rc = read_line(input_buffer, BUFFER_LEN);
 
   if(0 == rc){
+    Serial.println("got a command");
     /* Check to see if the string is a recognized command. */
     if(0 == strcmp(input_buffer, "inject")){
+      Serial.println("debug");
 
       inject = true;
 
@@ -376,24 +372,28 @@ bool get_user_input(){
   from the serial port. Writes the data to the buffer provided.
 */
 
-int read_line(char** buff, int buff_len, ){
+int read_line(char* buff, int buff_len){
   int rc;
 
-  char* strptr = *buff;
+  char* strptr = buff;
 
   bool overflow = false;
 
-  if (Serial.available()) do {
+  if (Serial.available()){
+    do {
+      
+      *strptr = Serial.read();
+      strptr++;
+  
+      if(strptr > (buff + buff_len)){
+        overflow = true;
+        break;
+      }
+      
+      delay(1);
 
-    *strptr = Serial.read();
-    strptr++;
-
-    if(strptr > (*buff + buff_len)){
-      overflow = true;
-      break;
-    }
-
-  } while (*(strptr - 1) != '\n');
+    } while (*(strptr - 1) != '\n');
+  }
 
   /* In case of buffer overflow, return 1*/
   if(overflow){
@@ -401,13 +401,13 @@ int read_line(char** buff, int buff_len, ){
   }
 
   /* In case of no data available, return -1*/
-  else if (strptr == *buff) {
+  else if (strptr == buff) {
     rc = -1;
   }
 
   /* No errors, clean up and return */
   else {
-    *strptr = '\0';
+    *(strptr-1) = '\0';
     rc = 0;
   }
 
