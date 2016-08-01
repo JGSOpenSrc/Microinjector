@@ -20,12 +20,14 @@
 #define TTL_INCREMENT_PIN 5
 #define IR_SENSOR_PIN A0
 
+#define WITHDRAW_STEP_COUNT 1200
+
 // Motor constants
 static const int motor_speed = 600;
 static const int steps_per_rev = 200;
 // ADC thresholds for the IR liquid sensor
-static const int high_to_low = 300;
-static const int low_to_high = 700;
+static const int high_to_low = 400;
+static const int low_to_high = 500;
 
 /* Enumeration of possible states */
 enum STATE{
@@ -76,7 +78,7 @@ void setup() {
   pinMode(S2, INPUT_PULLUP);                                    // Configure the S2 with an internal pullup.
 
   /* Determine the liquid level */
-  int avg;
+  /*int avg;
   for(i = 0; i < 10; i++){
     avg += analogRead(IR_SENSOR_PIN);
   } avg = avg / 10;
@@ -92,11 +94,13 @@ void setup() {
     Serial.println("Initially, liquid detected by sensor.");
   }
   else {
-    Serial.println("Sensor read intermediate value...");
-    Serial.println("There is an error with the setup or calibration of the IR sensor...");
-    Serial.println("Examine the average value read, fix the problem, and then reset or reprogram.");
-    while(1);
-  }
+    is_empty = false;
+  }*/
+  
+  int value = analogRead(IR_SENSOR_PIN);
+  sprintf(output_buffer, "IR sensor reads %d", value);
+  Serial.println(output_buffer);
+  if(value > low_to_high) is_empty = true;
 
   /* Determine the initial state of the micoinjector */
   if (!digitalRead(S1) && digitalRead(S2)){                     // Actuator is initally in zero_stroke position
@@ -104,13 +108,13 @@ void setup() {
     injector_state = halt;
     Serial.println("Acuator initial position is zero-stroke.");
   }
-  else if (digitalRead(S1) && !digitalRead(S2)){                // Actuator is initially in full_stroke position
-    injector_pos = full_stroke;
+  else if (digitalRead(S1) && digitalRead(S2)){                // Actuator is initially in full_stroke position
+    injector_pos = mid_stroke;
     injector_state = halt;
     Serial.println("Actuator initial position is mid-stroke");
   }
-  else if (digitalRead(S1) && digitalRead(S2)){                 // Actuator is initially in mid_stroke
-    injector_pos = mid_stroke;
+  else if (digitalRead(S1) && !digitalRead(S2)){                 // Actuator is initially in mid_stroke
+    injector_pos = full_stroke;
     injector_state = halt;
     Serial.println("Actuator initial position is full-stroke");
   }
@@ -122,6 +126,8 @@ void setup() {
     Serial.println("Fix the switches and then reset or reprogram.");
     while(1);
   }
+  
+  Serial.println("You must prime the actuator by pressing the front switch to continue.");
 
   /* Setup of the TTL injection trigger,
   this requires a digital pin, and configuration of a hardware counter. */
@@ -235,10 +241,11 @@ void loop() {
 
       if(!check_liquid()){                                      // if the liquid is still present, withdraw it.
         injector_state = withdraw;
+        steps = WITHDRAW_STEP_COUNT;
+        Serial.println("Withdrawing...");
       }
     }
     else {
-
       if(check_liquid() && get_user_input()){
         injector_state = inject;
         Serial.println("injecting..");
@@ -253,14 +260,16 @@ void loop() {
       motor->release();
       injector_pos = full_stroke;
       injector_state = halt;                                    // S2 tripped -> position is full-stroke. Go to halt state.
-      Serial.println("halt!");
+      Serial.println("End of actuator reached; please reset the position by pressing rear switch.");
     }
 
     /* If the liquid is detected, cease injecting and wait */
     else if (!check_liquid()){
       motor->release();
       injector_state = wait;
-      Serial.println("waiting for user input...");
+      int voltage = analogRead(0);
+      sprintf(output_buffer, "IR sensor reads %d", voltage);
+      Serial.println(output_buffer);
     }
 
     else {
@@ -278,20 +287,23 @@ void loop() {
       motor->release();
       injector_pos = zero_stroke;
       injector_state = halt;
-      Serial.println("halt!");
+      Serial.println("End of actuator reached; you must prime the actuator by pressing the front switch to continue.");
     }
 
     /* Liquid is no longer detected, cease withdrawing and wait */
-    else if (check_liquid()){
+    else if (0 == steps){
       motor->release();
       injector_state = wait;
-      Serial.println("waiting for user input...");
+      int voltage = analogRead(0);
+      sprintf(output_buffer, "IR sensor reads %d", voltage);
+      Serial.println(output_buffer);
+      if(check_liquid()) Serial.println("waiting for user input...");
     }
 
     /* Step backward to withdraw liquid */
     else {
         motor->step(1, BACKWARD, SINGLE);
-
+        steps -= 1;
         /* If S1 is pressed, the injector cannot step backward any more. */
         if(!digitalRead(S1)){
           motor->release();
@@ -330,15 +342,13 @@ bool get_user_input(){
   int rc = read_line(input_buffer, BUFFER_LEN);
 
   if(0 == rc){
-    Serial.println("got a command");
     /* Check to see if the string is a recognized command. */
     if(0 == strcmp(input_buffer, "inject")){
-      Serial.println("debug");
 
       inject = true;
 
       sprintf(output_buffer,
-              "Command received :: inject");
+              "Injection command received");
       Serial.println(output_buffer);
     }
 
@@ -347,7 +357,7 @@ bool get_user_input(){
       inject = false;
 
       sprintf(output_buffer,
-              "ERROR :: invalid command received");
+              "ERROR invalid command received");
       Serial.println(output_buffer);
     }
   }
