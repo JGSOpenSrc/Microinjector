@@ -12,6 +12,7 @@
 /* Defines for IO port names*/
 #define S1 9
 #define S2 10
+#define SOLENOID_ENERGIZE 8
 #define BOUNCE_DELAY 100
 #define TTL_INCREMENT_PIN 5
 
@@ -71,6 +72,9 @@ void setup() {
   pinMode(S1, INPUT_PULLUP);                                    // pole 1 of safety switch 1
   delay(10);                                                    // For some reason this delay is necessary
   pinMode(S2, INPUT_PULLUP);                                    // Configure the S2 with an internal pullup.
+  delay(10);
+  pinMode(SOLENOID_ENERGIZE, OUTPUT);                           // Set solenoid mosfet driver to output
+  digitalWite(SOLENOID_ENERGIZE, LOW);
 
                                                                 // Determining the initial state of the actuator...
   if (!digitalRead(S1) && digitalRead(S2)){                     // Actuator is initally in zero_stroke position
