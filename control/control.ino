@@ -21,7 +21,7 @@
 #define TTL_INCREMENT_PIN 5
 #define IR_SENSOR_PIN A0
 
-#define INJECT_STEP_COUNT 1200
+#define INJECT_STEP_COUNT 20000 // 600 looks good for this injector
 
 // Motor constants
 static const int motor_speed = 600;
@@ -77,7 +77,7 @@ void setup() {
   delay(10);                                                    // For some reason this delay is necessary
   pinMode(S2, INPUT_PULLUP);                                    // Configure the S2 with an internal pullup.
   delay(10);
-  
+
   pinMode(SOLENOID_ENERGIZE, OUTPUT);                           // Set solenoid mosfet driver to output
   digitalWrite(SOLENOID_ENERGIZE, LOW);
   delay(500);
@@ -229,6 +229,17 @@ bool injection_requested(){
 
       sprintf(output_buffer,
               "Injection command received");
+      Serial.println(output_buffer);
+    }
+
+    else if (0 < strtol(input_buffer, NULL, 10)) {
+
+      inject = true;
+
+      steps = strtol(input_buffer, NULL, 10);
+      sprintf(output_buffer,
+              "Injection command received for %d steps", steps);
+
       Serial.println(output_buffer);
     }
 
