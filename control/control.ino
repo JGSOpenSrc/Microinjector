@@ -140,7 +140,6 @@ void loop() {
   if (wait == injector_state){                             // wait state. The injector is waiting for an injection commmand form the user.
     if(injection_requested()){
       injector_state = inject;
-      steps = INJECT_STEP_COUNT;
       Serial.println("injecting..");
     }
   }
@@ -226,7 +225,7 @@ bool injection_requested(){
     if(0 == strcmp(input_buffer, "inject")){
 
       inject = true;
-
+      steps = INJECT_STEP_COUNT;
       sprintf(output_buffer,
               "Injection command received");
       Serial.println(output_buffer);
