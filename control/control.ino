@@ -20,15 +20,14 @@
 #define BOUNCE_DELAY 100
 #define TTL_INCREMENT_PIN 5
 #define IR_SENSOR_PIN A0
-
-#define INJECT_STEP_COUNT 20000 // 600 looks good for this injector
+#define INJECT_STEP_COUNT 20000 // Adjust this to achieve the desired injection unit volume
 
 // Motor constants
 static const int motor_speed = 600;
 static const int steps_per_rev = 200;
-// ADC thresholds for the IR liquid sensor
-static const int high_to_low = 400;
-static const int low_to_high = 500;
+// ADC threshold values for detecting liquid by electrical conductivity
+static const int high_to_low = 700;
+static const int low_to_high = 900;
 
 /* Enumeration of possible states */
 enum STATE{
@@ -83,9 +82,9 @@ void setup() {
   delay(500);
 
   int value = analogRead(IR_SENSOR_PIN);
-  sprintf(output_buffer, "IR sensor reads %d", value);
+  sprintf(output_buffer, "Conductivity sensor reads %d.", value);
   Serial.println(output_buffer);
-  if(value > low_to_high) is_empty = true;
+  if(value < high_to_low) is_empty = true;
 
   /* Determine the initial state of the micoinjector */
   if (!digitalRead(S1) && digitalRead(S2)){                     // Actuator is initally in zero_stroke position
@@ -135,17 +134,15 @@ void setup() {
 }
 
 void loop() {
-
-  //TODO: need to rip up some code here, no longer detecting liquid level....
   if (wait == injector_state){                             // wait state. The injector is waiting for an injection commmand form the user.
+    liquid_detected();
     if(injection_requested()){
       injector_state = inject;
-      Serial.println("injecting..");
+      Serial.println("Injecting.");
     }
   }
 
   else if (inject == injector_state){                           // inject state. The injector is currently stepping forward.
-
     /* If S2 is depressed, then the syringe is empty. */
     if (!digitalRead(S2)){
       motor->release();
@@ -153,18 +150,18 @@ void loop() {
       injector_state = withdraw;
       digitalWrite(SOLENOID_ENERGIZE, HIGH);
       delay(500);
-      Serial.println("End of actuator reached. Refilling syringe");
+      Serial.println("End of actuator reached. Refilling syringe.");
     }
 
     /* If the liquid is detected, cease injecting and wait */
-    else if (0 == steps){
+    else if (liquid_detected()){
       motor->release();
       injector_state = wait;
+      Serial.println("Liquid detected, injection complete.");
     }
 
     else {
       motor->step(1, FORWARD, SINGLE);
-      steps--;
       if(digitalRead(S1)){
         injector_pos = mid_stroke;                              // S1 high -> position is mid-stroke.
       }
@@ -172,40 +169,31 @@ void loop() {
   }
 
   else if (withdraw == injector_state){                         // withdraw state. The injecgtor is currently stepping backwards
-
     /* if S1 is depressed, then the syringe is full */
     if(!digitalRead(S1)){
       motor->release();
-      steps = 0;
-      injector_pos = zero_stroke;
-      injector_state = wait;
       digitalWrite(SOLENOID_ENERGIZE, LOW);
-      delay(500);
       Serial.println("Syringe has been filled.");
+      injector_pos = zero_stroke;
+      delay(500);
+      injector_state = wait;
     }
-
     /* Step backward to fill the syringe */
     else {
         motor->step(1, BACKWARD, SINGLE);
     }
   }
-
 }
 
-/*
-    TODO: rip up this code
-    Reads the value from the IR sensor, and based upon the value
-    read and the current value of is_empty, operates on is_empty and returns its value.
-
-    If there is liquid detected by the sensor, this will return false. If there
-    is no liquid detected, it will return true.
- */
-bool check_liquid(){
+/** returns true if liquid is detected by the conductivity sensor */
+bool liquid_detected(){
   int val = analogRead(IR_SENSOR_PIN);
-
-  is_empty = is_empty && !(val < high_to_low) || !is_empty && (val > low_to_high);
-
-  return is_empty;
+  bool detected = is_empty && (val > low_to_high)  || !is_empty && (val > high_to_low);
+  if (!detected && !is_empty) {
+    Serial.println("Liquid consumed.");
+  }
+  is_empty = !detected;
+  return detected;
 }
 
 /*
@@ -214,11 +202,8 @@ bool check_liquid(){
   command has been received.
 */
 bool injection_requested(){
-
   bool inject = false;
-
   int rc = read_line(input_buffer);
-
   /* Handle requests sent to the serial port. */
   if(0 < rc){
     /* Check to see if the string is a recognized command. */
@@ -238,14 +223,12 @@ bool injection_requested(){
       steps = strtol(input_buffer, NULL, 10);
       sprintf(output_buffer,
               "Injection command received for %d steps", steps);
-
       Serial.println(output_buffer);
     }
 
     else {
       /* The string received was no good */
       inject = false;
-
       sprintf(output_buffer,
               "ERROR invalid command received");
       Serial.println(output_buffer);
@@ -255,15 +238,12 @@ bool injection_requested(){
 
   /* Check the counter for a TTL pulse, which singals an injection request */
   else if(0 < TCNT1) {
-
     TCNT1--;
     inject = true;
-
     sprintf(output_buffer,
             "TTL pulse received");
     Serial.println(output_buffer);
   }
-
   return inject;
 }
 
@@ -284,7 +264,5 @@ int read_line(char buff[] ){
     rc = Serial.readBytesUntil( '\n', buff, BUFFER_LEN - 1);
     buff[rc] = '\0';
   }
-
   return rc;
-
 }
